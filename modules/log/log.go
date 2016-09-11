@@ -23,20 +23,21 @@ func NewLogger(bufLen int64, mode, config string) {
 	logger := newLogger(bufLen)
 
 	isExist := false
-	for _, l := range loggers {
+	for i, l := range loggers {
 		if l.adapter == mode {
 			isExist = true
-			l = logger
+			loggers[i] = logger
 		}
 	}
 	if !isExist {
 		loggers = append(loggers, logger)
 	}
 	if err := logger.SetLogger(mode, config); err != nil {
-		Fatal(1, "Fail to set logger(%s): %v", mode, err)
+		Fatal(2, "Fail to set logger (%s): %v", mode, err)
 	}
 }
 
+// FIXME: use same log level as other loggers.
 func NewGitLogger(logPath string) {
 	os.MkdirAll(path.Dir(logPath), os.ModePerm)
 	GitLogger = newLogger(0)
@@ -214,7 +215,11 @@ func (l *Logger) writerMsg(skip, level int, msg string) error {
 				fnName = strings.TrimLeft(filepath.Ext(fn.Name()), ".") + "()"
 			}
 
-			lm.msg = fmt.Sprintf("[%s:%d %s] %s", filepath.Base(file), line, fnName, msg)
+			fileName := file
+			if len(fileName) > 20 {
+				fileName = "..." + fileName[len(fileName)-20:]
+			}
+			lm.msg = fmt.Sprintf("[%s:%d %s] %s", fileName, line, fnName, msg)
 		} else {
 			lm.msg = msg
 		}

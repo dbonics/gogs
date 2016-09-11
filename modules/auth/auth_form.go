@@ -5,31 +5,36 @@
 package auth
 
 import (
-	"github.com/Unknwon/macaron"
-	"github.com/macaron-contrib/binding"
+	"github.com/go-macaron/binding"
+	"gopkg.in/macaron.v1"
 )
 
 type AuthenticationForm struct {
-	Id                int64  `form:"id"`
-	Type              int    `form:"type"`
-	AuthName          string `form:"name" binding:"Required;MaxSize(50)"`
-	Domain            string `form:"domain"`
-	Host              string `form:"host"`
-	Port              int    `form:"port"`
-	UseSSL            bool   `form:"usessl"`
-	BaseDN            string `form:"base_dn"`
-	AttributeUsername string `form:"attribute_username"`
-	AttributeName     string `form:"attribute_name"`
-	AttributeSurname  string `form:"attribute_surname"`
-	AttributeMail     string `form:"attribute_mail"`
-	Filter            string `form:"filter"`
-	MsAdSA            string `form:"ms_ad_sa"`
-	IsActived         bool   `form:"is_actived"`
-	SmtpAuth          string `form:"smtpauth"`
-	SmtpHost          string `form:"smtphost"`
-	SmtpPort          int    `form:"smtpport"`
-	Tls               bool   `form:"tls"`
-	AllowAutoRegister bool   `form:"allowautoregister"`
+	ID                int64
+	Type              int    `binding:"Range(2,5)"`
+	Name              string `binding:"Required;MaxSize(30)"`
+	Host              string
+	Port              int
+	BindDN            string
+	BindPassword      string
+	UserBase          string
+	UserDN            string
+	AttributeUsername string
+	AttributeName     string
+	AttributeSurname  string
+	AttributeMail     string
+	AttributesInBind  bool
+	Filter            string
+	AdminFilter       string
+	IsActive          bool
+	SMTPAuth          string
+	SMTPHost          string
+	SMTPPort          int
+	AllowedDomains    string
+	SecurityProtocol  int `binding:"Range(0,2)"`
+	TLS               bool
+	SkipVerify        bool
+	PAMServiceName    string
 }
 
 func (f *AuthenticationForm) Validate(ctx *macaron.Context, errs binding.Errors) binding.Errors {

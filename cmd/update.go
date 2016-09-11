@@ -7,7 +7,7 @@ package cmd
 import (
 	"os"
 
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 
 	"github.com/gogits/gogs/models"
 	"github.com/gogits/gogs/modules/log"
@@ -16,42 +16,43 @@ import (
 
 var CmdUpdate = cli.Command{
 	Name:        "update",
-	Usage:       "This command should only be called by SSH shell",
+	Usage:       "This command should only be called by Git hook",
 	Description: `Update get pushed info and insert into database`,
 	Action:      runUpdate,
 	Flags: []cli.Flag{
-		cli.StringFlag{"config, c", "custom/conf/app.ini", "Custom configuration file path", ""},
+		stringFlag("config, c", "custom/conf/app.ini", "Custom configuration file path"),
 	},
 }
 
-func runUpdate(c *cli.Context) {
+func runUpdate(c *cli.Context) error {
 	if c.IsSet("config") {
 		setting.CustomConf = c.String("config")
-	}
-	cmd := os.Getenv("SSH_ORIGINAL_COMMAND")
-	if cmd == "" {
-		return
 	}
 
 	setup("update.log")
 
-	args := c.Args()
-	if len(args) != 3 {
-		log.GitLogger.Fatal(2, "received less 3 parameters")
-	} else if args[0] == "" {
-		log.GitLogger.Fatal(2, "refName is empty, shouldn't use")
+	if len(os.Getenv("SSH_ORIGINAL_COMMAND")) == 0 {
+		log.GitLogger.Trace("SSH_ORIGINAL_COMMAND is empty")
+		return nil
 	}
 
-	uuid := os.Getenv("uuid")
+	args := c.Args()
+	if len(args) != 3 {
+		log.GitLogger.Fatal(2, "Arguments received are not equal to three")
+	} else if len(args[0]) == 0 {
+		log.GitLogger.Fatal(2, "First argument 'refName' is empty, shouldn't use")
+	}
 
 	task := models.UpdateTask{
-		Uuid:        uuid,
+		UUID:        os.Getenv("uuid"),
 		RefName:     args[0],
-		OldCommitId: args[1],
-		NewCommitId: args[2],
+		OldCommitID: args[1],
+		NewCommitID: args[2],
 	}
 
 	if err := models.AddUpdateTask(&task); err != nil {
-		log.GitLogger.Fatal(2, err.Error())
+		log.GitLogger.Fatal(2, "AddUpdateTask: %v", err)
 	}
+
+	return nil
 }

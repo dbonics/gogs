@@ -1,21 +1,19 @@
 [run]
 init_cmds = [
-	#["grep", "-rn", "FIXME", "."],
+	["make", "build-dev"],
 	["./gogs", "web"]
 ]
 watch_all = true
 watch_dirs = [
-	"$WORKDIR/conf/locale",
 	"$WORKDIR/cmd",
 	"$WORKDIR/models",
 	"$WORKDIR/modules",
 	"$WORKDIR/routers"
 ]
-watch_exts = [".go", ".ini"]
+watch_exts = [".go"]
+ignore_files = [".+_test.go"]
 build_delay = 1500
 cmds = [
-	#["go-bindata", "-o=modules/bindata/bindata.go", "-ignore=\\.DS_Store|README", "-pkg=bindata", "conf/..."],
-	["go", "install", "-tags", "sqlite cert"],# redis memcache
-	["go", "build", "-tags", "sqlite cert"],
+	["make", "build-dev"], # TAGS=sqlite cert pam tidb
 	["./gogs", "web"]
 ]

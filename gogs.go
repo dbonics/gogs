@@ -1,23 +1,23 @@
-// +build go1.2
+// +build go1.4
 
 // Copyright 2014 The Gogs Authors. All rights reserved.
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
-// Gogs(Go Git Service) is a painless self-hosted Git Service written in Go.
+// Gogs (Go Git Service) is a painless self-hosted Git Service.
 package main
 
 import (
 	"os"
 	"runtime"
 
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 
 	"github.com/gogits/gogs/cmd"
 	"github.com/gogits/gogs/modules/setting"
 )
 
-const APP_VER = "0.6.0.0319 Beta"
+const APP_VER = "0.9.99.0903"
 
 func init() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -27,7 +27,7 @@ func init() {
 func main() {
 	app := cli.NewApp()
 	app.Name = "Gogs"
-	app.Usage = "Go Git Service"
+	app.Usage = "Go Git Service: a painless self-hosted Git service"
 	app.Version = APP_VER
 	app.Commands = []cli.Command{
 		cmd.CmdWeb,
@@ -35,6 +35,7 @@ func main() {
 		cmd.CmdUpdate,
 		cmd.CmdDump,
 		cmd.CmdCert,
+		cmd.CmdAdmin,
 	}
 	app.Flags = append(app.Flags, []cli.Flag{}...)
 	app.Run(os.Args)

@@ -6,7 +6,9 @@ package models
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -26,9 +28,11 @@ type Engine interface {
 	Exec(string, ...interface{}) (sql.Result, error)
 	Find(interface{}, ...interface{}) error
 	Get(interface{}) (bool, error)
+	Id(interface{}) *xorm.Session
+	In(string, ...interface{}) *xorm.Session
 	Insert(...interface{}) (int64, error)
 	InsertOne(interface{}) (int64, error)
-	Id(interface{}) *xorm.Session
+	Iterate(interface{}, xorm.IterFunc) error
 	Sql(string, ...interface{}) *xorm.Session
 	Where(string, ...interface{}) *xorm.Session
 }
@@ -50,21 +54,28 @@ var (
 	}
 
 	EnableSQLite3 bool
+	EnableTiDB    bool
 )
 
 func init() {
 	tables = append(tables,
-		new(User), new(PublicKey), new(Oauth2), new(AccessToken),
-		new(Repository), new(Collaboration), new(Access),
+		new(User), new(PublicKey), new(AccessToken),
+		new(Repository), new(DeployKey), new(Collaboration), new(Access), new(Upload),
 		new(Watch), new(Star), new(Follow), new(Action),
-		new(Issue), new(Comment), new(Attachment), new(IssueUser), new(Label), new(Milestone),
+		new(Issue), new(PullRequest), new(Comment), new(Attachment), new(IssueUser),
+		new(Label), new(IssueLabel), new(Milestone),
 		new(Mirror), new(Release), new(LoginSource), new(Webhook),
 		new(UpdateTask), new(HookTask),
 		new(Team), new(OrgUser), new(TeamUser), new(TeamRepo),
 		new(Notice), new(EmailAddress))
+
+	gonicNames := []string{"SSL"}
+	for _, name := range gonicNames {
+		core.LintGonicMapper[name] = true
+	}
 }
 
-func LoadModelsConfig() {
+func LoadConfigs() {
 	sec := setting.Cfg.Section("database")
 	DbCfg.Type = sec.Key("DB_TYPE").String()
 	switch DbCfg.Type {
@@ -74,6 +85,8 @@ func LoadModelsConfig() {
 		setting.UseMySQL = true
 	case "postgres":
 		setting.UsePostgreSQL = true
+	case "tidb":
+		setting.UseTiDB = true
 	}
 	DbCfg.Host = sec.Key("HOST").String()
 	DbCfg.Name = sec.Key("NAME").String()
@@ -85,54 +98,81 @@ func LoadModelsConfig() {
 	DbCfg.Path = sec.Key("PATH").MustString("data/gogs.db")
 }
 
+// parsePostgreSQLHostPort parses given input in various forms defined in
+// https://www.postgresql.org/docs/current/static/libpq-connect.html#LIBPQ-CONNSTRING
+// and returns proper host and port number.
+func parsePostgreSQLHostPort(info string) (string, string) {
+	host, port := "127.0.0.1", "5432"
+	if strings.Contains(info, ":") && !strings.HasSuffix(info, "]") {
+		idx := strings.LastIndex(info, ":")
+		host = info[:idx]
+		port = info[idx+1:]
+	} else if len(info) > 0 {
+		host = info
+	}
+	return host, port
+}
+
 func getEngine() (*xorm.Engine, error) {
-	cnnstr := ""
+	connStr := ""
+	var Param string = "?"
+	if strings.Contains(DbCfg.Name, Param) {
+		Param = "&"
+	}
 	switch DbCfg.Type {
 	case "mysql":
 		if DbCfg.Host[0] == '/' { // looks like a unix socket
-			cnnstr = fmt.Sprintf("%s:%s@unix(%s)/%s?charset=utf8",
-				DbCfg.User, DbCfg.Passwd, DbCfg.Host, DbCfg.Name)
+			connStr = fmt.Sprintf("%s:%s@unix(%s)/%s%scharset=utf8&parseTime=true",
+				DbCfg.User, DbCfg.Passwd, DbCfg.Host, DbCfg.Name, Param)
 		} else {
-			cnnstr = fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8",
-				DbCfg.User, DbCfg.Passwd, DbCfg.Host, DbCfg.Name)
+			connStr = fmt.Sprintf("%s:%s@tcp(%s)/%s%scharset=utf8&parseTime=true",
+				DbCfg.User, DbCfg.Passwd, DbCfg.Host, DbCfg.Name, Param)
 		}
 	case "postgres":
-		var host, port = "127.0.0.1", "5432"
-		fields := strings.Split(DbCfg.Host, ":")
-		if len(fields) > 0 && len(strings.TrimSpace(fields[0])) > 0 {
-			host = fields[0]
+		host, port := parsePostgreSQLHostPort(DbCfg.Host)
+		if host[0] == '/' { // looks like a unix socket
+			connStr = fmt.Sprintf("postgres://%s:%s@:%s/%s%ssslmode=%s&host=%s",
+				url.QueryEscape(DbCfg.User), url.QueryEscape(DbCfg.Passwd), port, DbCfg.Name, Param, DbCfg.SSLMode, host)
+		} else {
+			connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s%ssslmode=%s",
+				url.QueryEscape(DbCfg.User), url.QueryEscape(DbCfg.Passwd), host, port, DbCfg.Name, Param, DbCfg.SSLMode)
 		}
-		if len(fields) > 1 && len(strings.TrimSpace(fields[1])) > 0 {
-			port = fields[1]
-		}
-		cnnstr = fmt.Sprintf("user=%s password=%s host=%s port=%s dbname=%s sslmode=%s",
-			DbCfg.User, DbCfg.Passwd, host, port, DbCfg.Name, DbCfg.SSLMode)
 	case "sqlite3":
 		if !EnableSQLite3 {
-			return nil, fmt.Errorf("Unknown database type: %s", DbCfg.Type)
+			return nil, errors.New("This binary version does not build support for SQLite3.")
 		}
-		os.MkdirAll(path.Dir(DbCfg.Path), os.ModePerm)
-		cnnstr = "file:" + DbCfg.Path + "?cache=shared&mode=rwc"
+		if err := os.MkdirAll(path.Dir(DbCfg.Path), os.ModePerm); err != nil {
+			return nil, fmt.Errorf("Fail to create directories: %v", err)
+		}
+		connStr = "file:" + DbCfg.Path + "?cache=shared&mode=rwc"
+	case "tidb":
+		if !EnableTiDB {
+			return nil, errors.New("This binary version does not build support for TiDB.")
+		}
+		if err := os.MkdirAll(path.Dir(DbCfg.Path), os.ModePerm); err != nil {
+			return nil, fmt.Errorf("Fail to create directories: %v", err)
+		}
+		connStr = "goleveldb://" + DbCfg.Path
 	default:
 		return nil, fmt.Errorf("Unknown database type: %s", DbCfg.Type)
 	}
-	return xorm.NewEngine(DbCfg.Type, cnnstr)
+	return xorm.NewEngine(DbCfg.Type, connStr)
 }
 
 func NewTestEngine(x *xorm.Engine) (err error) {
 	x, err = getEngine()
 	if err != nil {
-		return fmt.Errorf("connect to database: %v", err)
+		return fmt.Errorf("Connect to database: %v", err)
 	}
 
 	x.SetMapper(core.GonicMapper{})
-	return x.Sync(tables...)
+	return x.StoreEngine("InnoDB").Sync2(tables...)
 }
 
 func SetEngine() (err error) {
 	x, err = getEngine()
 	if err != nil {
-		return fmt.Errorf("connect to database: %v", err)
+		return fmt.Errorf("Fail to connect to database: %v", err)
 	}
 
 	x.SetMapper(core.GonicMapper{})
@@ -144,15 +184,10 @@ func SetEngine() (err error) {
 
 	f, err := os.Create(logPath)
 	if err != nil {
-		return fmt.Errorf("models.init(fail to create xorm.log): %v", err)
+		return fmt.Errorf("Fail to create xorm.log: %v", err)
 	}
 	x.SetLogger(xorm.NewSimpleLogger(f))
-
-	x.ShowSQL = true
-	x.ShowInfo = true
-	x.ShowDebug = true
-	x.ShowErr = true
-	x.ShowWarn = true
+	x.ShowSQL(true)
 	return nil
 }
 
@@ -187,18 +222,18 @@ func GetStatistic() (stats Statistic) {
 	stats.Counter.User = CountUsers()
 	stats.Counter.Org = CountOrganizations()
 	stats.Counter.PublicKey, _ = x.Count(new(PublicKey))
-	stats.Counter.Repo = CountRepositories()
+	stats.Counter.Repo = CountRepositories(true)
 	stats.Counter.Watch, _ = x.Count(new(Watch))
 	stats.Counter.Star, _ = x.Count(new(Star))
 	stats.Counter.Action, _ = x.Count(new(Action))
 	stats.Counter.Access, _ = x.Count(new(Access))
 	stats.Counter.Issue, _ = x.Count(new(Issue))
 	stats.Counter.Comment, _ = x.Count(new(Comment))
-	stats.Counter.Oauth, _ = x.Count(new(Oauth2))
+	stats.Counter.Oauth = 0
 	stats.Counter.Follow, _ = x.Count(new(Follow))
 	stats.Counter.Mirror, _ = x.Count(new(Mirror))
 	stats.Counter.Release, _ = x.Count(new(Release))
-	stats.Counter.LoginSource, _ = x.Count(new(LoginSource))
+	stats.Counter.LoginSource = CountLoginSources()
 	stats.Counter.Webhook, _ = x.Count(new(Webhook))
 	stats.Counter.Milestone, _ = x.Count(new(Milestone))
 	stats.Counter.Label, _ = x.Count(new(Label))

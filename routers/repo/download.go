@@ -8,39 +8,45 @@ import (
 	"io"
 	"path"
 
+	"github.com/gogits/git-module"
+
 	"github.com/gogits/gogs/modules/base"
-	"github.com/gogits/gogs/modules/git"
-	"github.com/gogits/gogs/modules/middleware"
+	"github.com/gogits/gogs/modules/context"
 )
 
-func ServeBlob(ctx *middleware.Context, blob *git.Blob) error {
+func ServeData(ctx *context.Context, name string, reader io.Reader) error {
+	buf := make([]byte, 1024)
+	n, _ := reader.Read(buf)
+	if n > 0 {
+		buf = buf[:n]
+	}
+
+	if !base.IsTextFile(buf) {
+		if !base.IsImageFile(buf) {
+			ctx.Resp.Header().Set("Content-Disposition", "attachment; filename=\""+path.Base(ctx.Repo.TreePath)+"\"")
+			ctx.Resp.Header().Set("Content-Transfer-Encoding", "binary")
+		}
+	} else if !ctx.QueryBool("render") {
+		ctx.Resp.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	ctx.Resp.Write(buf)
+	_, err := io.Copy(ctx.Resp, reader)
+	return err
+}
+
+func ServeBlob(ctx *context.Context, blob *git.Blob) error {
 	dataRc, err := blob.Data()
 	if err != nil {
 		return err
 	}
 
-	buf := make([]byte, 1024)
-	n, _ := dataRc.Read(buf)
-	if n > 0 {
-		buf = buf[:n]
-	}
-
-	_, isTextFile := base.IsTextFile(buf)
-	_, isImageFile := base.IsImageFile(buf)
-	ctx.Resp.Header().Set("Content-Type", "text/plain")
-	if !isTextFile && !isImageFile {
-		ctx.Resp.Header().Set("Content-Disposition", "attachment; filename="+path.Base(ctx.Repo.TreeName))
-		ctx.Resp.Header().Set("Content-Transfer-Encoding", "binary")
-	}
-	ctx.Resp.Write(buf)
-	_, err = io.Copy(ctx.Resp, dataRc)
-	return err
+	return ServeData(ctx, ctx.Repo.TreePath, dataRc)
 }
 
-func SingleDownload(ctx *middleware.Context) {
-	blob, err := ctx.Repo.Commit.GetBlobByPath(ctx.Repo.TreeName)
+func SingleDownload(ctx *context.Context) {
+	blob, err := ctx.Repo.Commit.GetBlobByPath(ctx.Repo.TreePath)
 	if err != nil {
-		if err == git.ErrNotExist {
+		if git.IsErrNotExist(err) {
 			ctx.Handle(404, "GetBlobByPath", nil)
 		} else {
 			ctx.Handle(500, "GetBlobByPath", err)
